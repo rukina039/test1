@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Music Portfolio</title>
+
+    <!-- Swiper CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/swiper/swiper-bundle.min.css">
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <header>
+        <h1>Ishida Music Lounge</h1>
+    </header>
+
+    <nav>
+        <a href="#profile">プロフィール</a>
+        <a href="#topics-section">FANBOX</a>
+        <a href="#contact">楽曲制作等のお問い合わせ</a>
+    </nav>
+
+    <!-- Swiper スライドショー -->
+    <div class="swiper-container">
+        <div class="swiper-wrapper">
+            <!-- youtube埋め込みスライド -->
+            <div class="swiper-slide">
+                <iframe width="560" height="315" src="https://www.youtube.com/embed/XgM6GtHD3ig?start=19" allowfullscreen></iframe>
+            </div>
+            <div class="swiper-slide">
+                <iframe width="560" height="315" src="https://www.youtube.com/embed/XsaHCe73H0o?start=5" allowfullscreen></iframe>
+            </div>
+            <div class="swiper-slide">
+                <iframe src="https://www.youtube.com/embed/1KTBEvW8LMc" allowfullscreen></iframe>
+            </div>
+            <div class="swiper-slide">
+                <iframe src="https://www.youtube.com/embed/n_K9PfgQQko" allowfullscreen></iframe>
+            </div>
+        </div>
+        <div class="swiper-pagination"></div>
+        <div class="swiper-button-next"></div>
+        <div class="swiper-button-prev"></div>
+    </div>
+
+    <!-- プロフィールセクション -->
+    <section id="profile" class="profile-section">
+        <div class="profile-text">
+            <h2>プロフィール</h2>
+            <p>イシダ テツヒロ</p>
+            <p>1997年11月10日生まれ。</p>
+            <p>作編曲家、Track maker。</p>
+            <p>音楽専門学校を卒業後、作編曲家として活動。</p>
+            <p>Youtubeでは自身のオリジナル曲や音楽制作に役立つチュートリアル動画を投稿。</p>
+        </div>
+        <div class="sns-links">
+            <h3 class="links-title">LINK</h3>
+            <a href="https://twitter.com/tetsuhiro4444">X(旧Twitter)</a>
+            <a href="https://www.instagram.com/ishida_tetsuhiro">Instagram</a>
+            <a href="https://www.youtube.com/channel/UCpI9-Zb9cgYSUks_iouuA_w">YouTube</a>
+            <a href="https://tetsuhiro.booth.pm/">Booth</a>
+            <a href="https://ishidamusic.fanbox.cc/">FANBOX</a>
+        </div>
+    </section>
+
+    <!-- 新しいセクション -->
+    <section id="topics-section" class="topics-section">
+        <h2 class="topics-title">Ishida Studioの紹介(FANBOX)</h2>
+        <div class="topics-container">
+            <div class="topic">
+                <h3>Ishida Studioとは</h3>
+                <p>作編曲家、Track makerのイシダテツヒロによるコミュニティ。初心者〜上級者に役立つコンテンツです。</p>
+            </div>
+            <div class="topic">
+                <h3>コンテンツ 1：Project File (Ableton Live) のダウンロード</h3>
+            </div>
+        </div>
+    </section>
+
+    <!-- 問い合わせセクション -->
+    <section id="contact" class="contact-section">
+        <div class="contact-text">
+            <h2>楽曲制作等のお問い合わせ</h2>
+            <form action="/send" method="post">
+                <label for="name">お名前(Name):</label>
+                <input type="text" id="name" name="name" required><br>
+                <label for="email">メールアドレス(Mail):</label>
+                <input type="email" id="email" name="email" required><br>
+                <label for="subject">題名(Title):</label>
+                <input type="text" id="subject" name="subject" required><br>
+                <label for="message">メッセージ(Message):</label>
+                <textarea id="message" name="message" required></textarea><br>
+                <button type="submit">Send</button>
+            </form>
+        </div>
+    </section>
+
+    <footer>
+        <p>&copy; 2024 Ishida Music Lounge. All Rights Reserved.</p>
+    </footer>
+
+    <!-- Swiper JS -->
+    <script src="https://unpkg.com/swiper/swiper-bundle.min.js"></script>
+    <script src="scripts.js"></script>
+</body>
+</html>
