@@ -1,0 +1,1269 @@
+
+
+You are a global specialist in web applications.
+Please refine the design of the following application to make it more sophisticated.
+Additionally, if you have any ideas for additional features, please let me know.
+
+my_expense_app/
+├── app.py
+├── extensions.py
+├── models.py
+├── requirements.txt
+├── app.yaml
+└── templates/
+    ├── base.html
+    ├── login.html
+    ├── edit.html
+    └── index.html
+
+app.py
+# app.py
+import os
+import uuid
+import json
+from flask import Flask, request, render_template, redirect, url_for, session, flash, jsonify
+from datetime import datetime
+from collections import defaultdict
+from functools import wraps
+from filelock import FileLock
+
+from models import Expense
+
+app = Flask(__name__)
+app.secret_key = os.environ.get("SECRET_KEY", "YOUR_SECURE_SECRET_KEY")  # 本番では安全なキーに変更
+
+# JSONファイルの設定
+DATA_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data.json')
+LOCK_FILE = DATA_FILE + '.lock'
+
+PASSWORD = os.environ.get("APP_PASSWORD", "eringi39")  # 本番では安全なパスワードに変更
+
+# タグ自動分類用マッピング
+TAG_MAPPING = [
+    ("amazon", "Amazon"),
+    ("ピアゴ", "食費"),
+    ("マクドナルド", "娯楽費(外食費等)"),
+    ("ヤオスズ", "食費"),
+    ("ダイソー", "生活費(日用品等)"),
+    ("セリア", "生活費(日用品等)"),
+    ("サイゼリア", "娯楽費(外食費等)"),
+    ("ニトリ", "生活費(日用品等)"),
+    ("udemy", "自己投資"),
+    ("餃子", "娯楽費(外食費等)"),
+    ("ＥＸ", "交通費"),
+    ("アウトレット", "生活費(日用品等)"),
+    ("バス", "交通費"),
+    ("セブン", "娯楽費(外食費等)"),
+    ("ミニストップ", "娯楽費(外食費等)"),
+    ("ソフトバンク", "生活費(日用品等)"),
+    ("乙女屋", "交際費"),
+    ("もみの木", "娯楽費(外食費等)"),
+    ("赤から", "娯楽費(外食費等)"),
+    ("openai", "自己投資"),
+    ("coco壱", "娯楽費(外食費等)"),
+    ("スシロー", "娯楽費(外食費等)"),
+    ("gifta", "立替"),
+    ("電力", "生活費(日用品等)"),
+    ("オイル", "生活費(日用品等)"),
+    ("大東", "生活費(日用品等)"),
+    ("パン", "娯楽費(外食費等)"),
+    ("スギ", "生活費(日用品等)"),
+    ("丸亀製麺", "娯楽費(外食費等)"),
+    ("Ｓｕｉｃａ", "交通費"),
+    ("コーラ", "娯楽費(外食費等)"),
+    ("カレー", "娯楽費(外食費等)"),
+    ("エディオン", "生活費(日用品等)"),
+    ("ベルマート", "生活費(日用品等)"),
+    ("Ｈａｉｒ", "自己投資"),
+    ("フアミリ", "娯楽費(外食費等)"),
+    ("Ｃａｎａｌ", "娯楽費(外食費等)"),
+    ("くら寿司", "娯楽費(外食費等)"),
+    ("ワッツ", "生活費(日用品等)"),
+    ("ＤＣＭ", "生活費(日用品等)"),
+    ("ローソン", "生活費(日用品等)"),
+    ("ＥＮＥＯＳ", "生活費(日用品等)"),
+    ("コメダ", "娯楽費(外食費等)"),
+    ("すき家", "娯楽費(外食費等)")
+]
+
+def parse_amount(amount_str):
+    """例: '1,500円' や '100.99円' を整数（円単位）に変換（小数点以下は切り捨て）"""
+    cleaned = amount_str.replace("円", "").replace(",", "").strip()
+    try:
+        return int(float(cleaned))
+    except ValueError:
+        return 0
+
+def automatic_tagging(store_name):
+    """店舗名から自動的にタグを返す（マッピングに一致しなければ 'その他'）"""
+    lower = store_name.lower()
+    for kw, tg in TAG_MAPPING:
+        if kw.lower() in lower:
+            return tg
+    return "その他"
+
+def login_required(func):
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        if not session.get("logged_in"):
+            flash("ログインが必要です。", "error")
+            return redirect(url_for("login"))
+        return func(*args, **kwargs)
+    return wrapper
+
+def load_data():
+    if not os.path.exists(DATA_FILE):
+        with open(DATA_FILE, 'w', encoding='utf-8') as f:
+            json.dump([], f, ensure_ascii=False, indent=4)
+    with FileLock(LOCK_FILE):
+        with open(DATA_FILE, 'r', encoding='utf-8') as f:
+            return json.load(f)
+
+def save_data(data):
+    with FileLock(LOCK_FILE):
+        with open(DATA_FILE, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=4)
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if request.method == "POST":
+        pw = request.form.get("password")
+        if pw == PASSWORD:
+            session["logged_in"] = True
+            flash("ログインしました。", "success")
+            return redirect(url_for("index"))
+        else:
+            flash("パスワードが違います。", "error")
+    return render_template("login.html")
+
+@app.route("/logout")
+def logout():
+    session.pop("logged_in", None)
+    flash("ログアウトしました。", "success")
+    return redirect(url_for("login"))
+
+@app.route("/", methods=["GET", "POST"])
+@login_required
+def index():
+    try:
+        if request.method == "POST":
+            submit_type = request.form.get("submit_type", "")
+            data = load_data()
+            if submit_type == "add_manual":
+                date_str = request.form.get("date", "")
+                store_str = request.form.get("store", "")
+                amount_str = request.form.get("amount", "")
+                tag_str = request.form.get("tag", "")
+                det_str = request.form.get("details", "")
+                if date_str and store_str and amount_str:
+                    amt = parse_amount(amount_str)
+                    auto_tag = automatic_tagging(store_str) if not tag_str else tag_str.strip()
+                    new_expense = Expense(
+                        id=str(uuid.uuid4()),
+                        date=date_str.strip(),
+                        store=store_str.strip(),
+                        amount=amt,
+                        tag=auto_tag,
+                        details=det_str.strip()
+                    )
+                    data.append(new_expense.to_dict())
+                    save_data(data)
+                    flash("新規出費を追加しました。", "success")
+            elif submit_type == "add_paste":
+                paste_data = request.form.get("paste_data", "")
+                if paste_data:
+                    lines = [ln.strip() for ln in paste_data.split("\n") if ln.strip()]
+                    idx = 0
+                    added_count = 0
+                    while idx + 4 < len(lines):
+                        try:
+                            y_line = lines[idx].rstrip("/")
+                            md_line = lines[idx+1].rstrip("/")
+                            store_line = lines[idx+2]
+                            amt_line = lines[idx+4]
+                            try:
+                                yy = int(y_line)
+                                mm, dd = map(int, md_line.split("/"))
+                                dt = datetime(yy, mm, dd)
+                                date_str = dt.strftime("%Y-%m-%d")
+                            except:
+                                idx += 5
+                                continue
+                            amt_val = parse_amount(amt_line)
+                            auto_tag = automatic_tagging(store_line)
+                            new_expense = Expense(
+                                id=str(uuid.uuid4()),
+                                date=date_str,
+                                store=store_line,
+                                amount=amt_val,
+                                tag=auto_tag,
+                                details=""
+                            )
+                            data.append(new_expense.to_dict())
+                            added_count += 1
+                            idx += 5
+                        except IndexError:
+                            break
+                    save_data(data)
+                    flash(f"ペースト入力の出費を追加しました。({added_count}件)", "success")
+            elif submit_type == "delete_selected":
+                selected_ids = request.form.getlist("selected_ids")
+                if selected_ids:
+                    data = [item for item in data if item['id'] not in selected_ids]
+                    save_data(data)
+                    flash(f"{len(selected_ids)}件のデータを削除しました。", "success")
+                else:
+                    flash("削除対象が選択されていません。", "error")
+            elif submit_type == "delete_all":
+                save_data([])
+                flash("すべてのデータを削除しました。", "success")
+        # ---------------------
+        # データ読み込み＆フィルタリング
+        # ---------------------
+        data = load_data()
+        filtered_data = [Expense(**item) for item in data]
+
+        yymm = request.args.get("year_month", "")
+        if yymm:
+            filtered_data = [exp for exp in filtered_data if exp.date.startswith(f"{yymm}-")]
+
+        start_date_str = request.args.get("start_date", "").strip()
+        end_date_str = request.args.get("end_date", "").strip()
+        if start_date_str:
+            try:
+                start_date = datetime.strptime(start_date_str, "%Y-%m-%d").date()
+                filtered_data = [exp for exp in filtered_data if datetime.strptime(exp.date, "%Y-%m-%d").date() >= start_date]
+            except ValueError:
+                pass
+        if end_date_str:
+            try:
+                end_date = datetime.strptime(end_date_str, "%Y-%m-%d").date()
+                filtered_data = [exp for exp in filtered_data if datetime.strptime(exp.date, "%Y-%m-%d").date() <= end_date]
+            except ValueError:
+                pass
+
+        f_tag = request.args.get("filter_tag", "").strip()
+        if f_tag:
+            filtered_data = [exp for exp in filtered_data if exp.tag == f_tag]
+
+        sort_order = request.args.get("sort_order", "asc").strip().lower()
+        if sort_order not in ["asc", "desc"]:
+            sort_order = "asc"
+        filtered_data = sorted(filtered_data, key=lambda x: x.date, reverse=(sort_order=="desc"))
+
+        overall_line = defaultdict(int)
+        for exp in filtered_data:
+            ym = exp.date[:7]
+            overall_line[ym] += exp.amount
+
+        unique_months = sorted({exp.date[:7] for exp in [Expense(**item) for item in data]})
+        all_months_sorted = sorted({exp.date[:7] for exp in filtered_data})
+        overall_dataset = [overall_line[m] for m in all_months_sorted]
+
+        cat_data = defaultdict(lambda: defaultdict(int))
+        for exp in filtered_data:
+            tg = exp.tag or "その他"
+            ym = exp.date[:7]
+            cat_data[tg][ym] += exp.amount
+        tags_sorted = sorted(cat_data.keys())
+        cat_charts = {}
+        for cat in tags_sorted:
+            cat_charts[cat] = [cat_data[cat].get(m, 0) for m in all_months_sorted]
+
+        latest_month = all_months_sorted[-1] if all_months_sorted else ""
+
+        stacked_datasets = []
+        color_palette = [
+            'rgba(54,162,235,0.7)', 'rgba(255,206,86,0.7)',
+            'rgba(75,192,192,0.7)', 'rgba(153,102,255,0.7)',
+            'rgba(255,159,64,0.7)', 'rgba(255,99,132,0.7)',
+            'rgba(201,203,207,0.7)', 'rgba(0,255,0,0.7)',
+            'rgba(0,0,255,0.7)', 'rgba(255,255,0,0.7)'
+        ]
+        for i, cat in enumerate(tags_sorted):
+            stacked_datasets.append({
+                "label": cat,
+                "data": cat_charts[cat],
+                "borderColor": color_palette[i % len(color_palette)],
+                "backgroundColor": color_palette[i % len(color_palette)],
+                "fill": True,
+                "tension": 0.4,
+                "pointBackgroundColor": color_palette[i % len(color_palette)],
+                "pointBorderColor": '#fff',
+                "pointRadius": 3,
+                "pointHoverRadius": 5
+            })
+
+        year_month_choices = [(m, m) for m in unique_months]
+        monthly_data = dict(overall_line)
+
+        # カテゴリー内訳用データ（ドーナツチャート用）
+        category_totals = defaultdict(int)
+        for exp in filtered_data:
+            cat = exp.tag or "その他"
+            category_totals[cat] += exp.amount
+        category_totals_data = [category_totals[cat] for cat in tags_sorted]
+
+        return render_template(
+            "index.html",
+            data=filtered_data,
+            unique_tags=sorted({exp.tag or "その他" for exp in [Expense(**item) for item in data]}),
+            year_month_choices=year_month_choices,
+            all_months=all_months_sorted,
+            overall_dataset=overall_dataset,
+            cat_charts=cat_charts,
+            tags=tags_sorted,
+            latest_month=latest_month,
+            stacked_datasets=stacked_datasets,
+            current_sort_order=sort_order,
+            monthly_data=monthly_data,
+            category_totals_labels=tags_sorted,
+            category_totals_data=category_totals_data
+        )
+    except Exception as e:
+        flash(f"エラーが発生しました: {str(e)}", "error")
+        return redirect(url_for("index"))
+
+@app.route("/edit/<record_id>", methods=["GET", "POST"])
+@login_required
+def edit(record_id):
+    try:
+        start_date_param = request.args.get("start_date", "")
+        end_date_param = request.args.get("end_date", "")
+        yymm_param = request.args.get("year_month", "")
+        filter_tag_param = request.args.get("filter_tag", "")
+        sort_order_param = request.args.get("sort_order", "asc")
+
+        data = load_data()
+        expense_data = next((item for item in data if item['id'] == record_id), None)
+        if not expense_data:
+            flash("対象データが見つかりません。", "error")
+            return redirect(url_for("index"))
+
+        expense = Expense(**expense_data)
+        unique_tags = sorted({Expense(**item).tag or "その他" for item in data})
+
+        if request.method == "POST":
+            date_str = request.form.get("date", "")
+            store_str = request.form.get("store", "")
+            amt_str = request.form.get("amount", "")
+            tag_str = request.form.get("tag", "")
+            det_str = request.form.get("details", "")
+
+            h_start_date = request.form.get("start_date_hidden", "")
+            h_end_date = request.form.get("end_date_hidden", "")
+            h_year_month = request.form.get("year_month_hidden", "")
+            h_filter_tag = request.form.get("filter_tag_hidden", "")
+            h_sort_order = request.form.get("sort_order_hidden", "asc")
+
+            if date_str and store_str and amt_str:
+                expense.date = date_str.strip()
+                expense.store = store_str.strip()
+                expense.amount = parse_amount(amt_str)
+                expense.tag = automatic_tagging(store_str) if not tag_str else tag_str.strip()
+                expense.details = det_str.strip()
+
+                for item in data:
+                    if item['id'] == record_id:
+                        item.update(expense.to_dict())
+                        break
+                save_data(data)
+                flash("編集を保存しました。", "success")
+                return redirect(url_for("index", start_date=h_start_date, end_date=h_end_date, year_month=h_year_month, filter_tag=h_filter_tag, sort_order=h_sort_order))
+            else:
+                flash("必須項目が不足しています。", "error")
+                return render_template("edit.html", record=expense, unique_tags=unique_tags, start_date=start_date_param, end_date=end_date_param, year_month=yymm_param, filter_tag=filter_tag_param, current_sort_order=sort_order_param)
+        return render_template("edit.html", record=expense, unique_tags=unique_tags, start_date=start_date_param, end_date=end_date_param, year_month=yymm_param, filter_tag=filter_tag_param, current_sort_order=sort_order_param)
+    except Exception as e:
+        flash(f"エラーが発生しました: {str(e)}", "error")
+        return redirect(url_for("index"))
+
+@app.route("/delete/<record_id>", methods=["POST"])
+@login_required
+def delete(record_id):
+    try:
+        data = load_data()
+        new_data = [item for item in data if item['id'] != record_id]
+        if len(new_data) != len(data):
+            save_data(new_data)
+            flash("削除しました。", "success")
+        else:
+            flash("削除対象が見つかりません。", "error")
+        return redirect(url_for("index"))
+    except Exception as e:
+        flash(f"エラーが発生しました: {str(e)}", "error")
+        return redirect(url_for("index"))
+
+@app.route("/api/plot_detail", methods=["POST"])
+@login_required
+def plot_detail():
+    try:
+        req_data = request.get_json()
+        if not req_data:
+            return jsonify({"error": "データがありません"}), 400
+
+        selected_month = req_data.get("month", "")
+        selected_tag = req_data.get("tag", "")
+
+        if not selected_month:
+            return jsonify({"error": "月が指定されていません"}), 400
+
+        data = [Expense(**item) for item in load_data()]
+
+        if selected_tag == "Overall":
+            tag_totals = defaultdict(int)
+            for expense in data:
+                if expense.date.startswith(f"{selected_month}-"):
+                    tag_totals[expense.tag or "その他"] += expense.amount
+            result_list = [{"tag": tag, "amount": amt} for tag, amt in tag_totals.items()]
+        else:
+            store_totals = defaultdict(int)
+            for expense in data:
+                if expense.date.startswith(f"{selected_month}-") and expense.tag == selected_tag:
+                    store_totals[expense.store] += expense.amount
+            result_list = [{"store": store, "amount": amt} for store, amt in store_totals.items()]
+
+        return jsonify({"detail": result_list})
+    except Exception as e:
+        return jsonify({"error": f"エラーが発生しました: {str(e)}"}), 500
+
+if __name__ == "__main__":
+    load_data()  # データファイルが存在しない場合に備える
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host="0.0.0.0", port=port, debug=False)
+
+
+
+
+
+
+
+
+
+extensions.py
+# extensions.py
+from flask_sqlalchemy import SQLAlchemy
+
+db = SQLAlchemy()
+
+
+
+
+models.py
+# models.py
+from dataclasses import dataclass, asdict
+
+@dataclass
+class Expense:
+    id: str
+    date: str  # YYYY-MM-DD
+    store: str
+    amount: int
+    tag: str = "その他"
+    details: str = ""
+
+    def to_dict(self):
+        return asdict(self)
+
+
+
+requirements.txt
+Flask==2.3.2
+Flask-SQLAlchemy==3.0.5
+gunicorn==20.1.0
+filelock==3.12.0
+
+
+
+app.yaml
+runtime: custom
+env: flex
+
+env_variables:
+  SECRET_KEY: "YOUR_SECURE_SECRET_KEY"
+  APP_PASSWORD: "your_secure_password"
+
+resources:
+  cpu: 1
+  memory_gb: 1
+
+
+
+
+base.html 
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>{% block title %}Modern Expense Tracker{% endblock %}</title>
+  
+  <!-- Bootstrap 5 -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+  
+  <!-- Chart.js -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <!-- Chart.js Zoom Plugin -->
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@1.2.1/dist/chartjs-plugin-zoom.min.js"></script>
+  
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      min-height: 100vh;
+      transition: background-color 0.3s, color 0.3s;
+    }
+    /* 常にダークモード */
+    body {
+      background: linear-gradient(135deg, #1f4037, #99f2c8);
+      color: #fff;
+    }
+    a, label {
+      color: inherit;
+    }
+    .navbar-brand {
+      font-weight: bold;
+      text-transform: uppercase;
+    }
+    .content-wrapper {
+      flex: 1;
+      width: 100%;
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 30px 15px;
+    }
+    .footer {
+      background-color: rgba(255, 255, 255, 0.1);
+      text-align: center;
+      padding: 10px 0;
+    }
+    .flash-message {
+      padding: 0.75rem;
+      border-radius: 4px;
+      margin-bottom: 1rem;
+    }
+    .flash-message.success {
+      background-color: #198754;
+    }
+    .flash-message.error {
+      background-color: #dc3545;
+    }
+    /* 統一したボタンデザイン */
+    .btn-custom {
+      border-radius: 25px;
+      font-weight: bold;
+      padding: 0.5rem 1.5rem;
+    }
+    /* Frosted Glass コンテナ */
+    .frosted-glass {
+      background-color: rgba(0, 0, 0, 0.5);
+      border-radius: 15px;
+      box-shadow: 0 8px 32px 0 rgba(0,0,0,0.2);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      border: 1px solid rgba(255,255,255,0.1);
+    }
+    /* モバイル用調整 */
+    @media (max-width: 576px) {
+      .btn-custom {
+        font-size: 0.8rem;
+        padding: 0.4rem 0.8rem;
+      }
+      .filter-form {
+        flex-direction: column;
+        align-items: stretch;
+      }
+      .filter-form .col-auto {
+        width: 100%;
+        margin-bottom: 0.5rem;
+      }
+    }
+  </style>
+  
+  {% block head_scripts %}{% endblock head_scripts %}
+</head>
+<body class="dark-mode">
+  <!-- ナビゲーションバー（テーマ切替ボタンは削除） -->
+  <nav class="navbar navbar-expand-lg navbar-dark" style="background-color: rgba(0,0,0,0.3);">
+    <div class="container-fluid">
+      <a class="navbar-brand" href="{{ url_for('index') }}">Expense Tracker</a>
+      <button class="navbar-toggler" type="button" data-bs-toggle="collapse"
+              data-bs-target="#navbarNav" aria-controls="navbarNav"
+              aria-expanded="false" aria-label="Toggle navigation">
+        <span class="navbar-toggler-icon"></span>
+      </button>
+      <div class="collapse navbar-collapse" id="navbarNav">
+        <ul class="navbar-nav ms-auto">
+          {% if session.get("logged_in") %}
+          <li class="nav-item">
+            <a class="nav-link" href="{{ url_for('logout') }}">ログアウト</a>
+          </li>
+          {% endif %}
+        </ul>
+      </div>
+    </div>
+  </nav>
+
+  <!-- コンテンツラッパー -->
+  <div class="content-wrapper">
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        {% for category, msg in messages %}
+        <div class="flash-message {{ category }}">{{ msg }}</div>
+        {% endfor %}
+      {% endif %}
+    {% endwith %}
+    {% block content %}{% endblock content %}
+  </div>
+
+  <!-- フッター -->
+  <footer class="footer">
+    <div class="container">
+      <small>&copy; 2025 Naito. All Rights Reserved. Designed with care for better budgeting.</small>
+    </div>
+  </footer>
+
+  <!-- Bootstrap Bundle JS -->
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+  {% block body_scripts %}{% endblock body_scripts %}
+</body>
+</html>
+
+
+
+
+
+
+
+
+
+
+
+
+login.html
+{% extends "base.html" %}
+{% block title %}ログイン - Modern Expense Tracker{% endblock title %}
+
+{% block content %}
+<div class="d-flex justify-content-center align-items-center" style="height: 80vh;">
+  <div class="frosted-glass p-4" style="max-width: 400px; width: 100%;">
+    <h2 class="text-center mb-4">ログイン</h2>
+    <form method="post">
+      <div class="mb-3">
+        <label for="password" class="form-label">パスワード</label>
+        <input type="password" name="password" id="password" class="form-control" required>
+      </div>
+      <button type="submit" class="btn btn-custom btn-primary w-100">ログイン</button>
+    </form>
+  </div>
+</div>
+{% endblock content %}
+
+
+edit.html
+{% extends "base.html" %}
+{% block title %}編集 - Modern Expense Tracker{% endblock title %}
+
+{% block content %}
+<div class="container my-4">
+  <div class="frosted-glass p-4">
+    <h2 class="text-center mb-4">出費編集</h2>
+    <form method="post" action="{{ url_for('edit', record_id=record.id) }}">
+      <!-- フィルター維持用の隠しフィールド -->
+      <input type="hidden" name="start_date_hidden" value="{{ start_date }}">
+      <input type="hidden" name="end_date_hidden" value="{{ end_date }}">
+      <input type="hidden" name="year_month_hidden" value="{{ year_month }}">
+      <input type="hidden" name="filter_tag_hidden" value="{{ filter_tag }}">
+      <input type="hidden" name="sort_order_hidden" value="{{ current_sort_order }}">
+      
+      <div class="mb-3">
+        <label for="date" class="form-label">日付 (YYYY-MM-DD)</label>
+        <input type="date" class="form-control" name="date" id="date" value="{{ record.date }}" required>
+      </div>
+      <div class="mb-3">
+        <label for="store" class="form-label">購入店舗</label>
+        <input type="text" class="form-control" name="store" id="store" value="{{ record.store }}" required>
+      </div>
+      <div class="mb-3">
+        <label for="amount" class="form-label">金額</label>
+        <div class="input-group">
+          <input type="text" class="form-control" name="amount" id="amount" value="{{ record.amount }}円" required>
+          <span class="input-group-text">円</span>
+        </div>
+      </div>
+      <div class="mb-3">
+        <label for="tag" class="form-label">タグ</label>
+        <input type="text" class="form-control" name="tag" id="tag" list="tag-list" value="{{ record.tag }}">
+        <datalist id="tag-list">
+          {% for t in unique_tags %}
+          <option value="{{ t }}">
+          {% endfor %}
+          <option value="その他">
+        </datalist>
+      </div>
+      <div class="mb-3">
+        <label for="details" class="form-label">詳細</label>
+        <input type="text" class="form-control" name="details" id="details" value="{{ record.details }}">
+      </div>
+      <div class="d-grid gap-2">
+        <button type="submit" class="btn btn-custom btn-success">更新</button>
+        <a href="{{ url_for('index', start_date=start_date, end_date=end_date, year_month=year_month, filter_tag=filter_tag, sort_order=current_sort_order) }}" class="btn btn-custom btn-outline-light">キャンセル</a>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock content %}
+
+
+
+
+
+
+
+index.html
+{% extends "base.html" %}
+{% block title %}Modern Expense Tracker{% endblock title %}
+
+{% block content %}
+<div class="container">
+  <!-- ヘッダー -->
+  <div class="d-flex flex-wrap justify-content-between align-items-center mb-4">
+    <h1>Household Budget Dashboard</h1>
+    <div class="mb-2">
+      <button class="btn btn-custom btn-success me-2" data-bs-toggle="modal" data-bs-target="#newEntryModal">新規入力</button>
+      <button class="btn btn-custom btn-primary" data-bs-toggle="modal" data-bs-target="#pasteEntryModal">新規入力(ペースト)</button>
+    </div>
+  </div>
+  
+  <!-- ダッシュボードチャート -->
+  <div class="row">
+    <!-- 全体の出費グラフ -->
+    <div class="col-lg-6 col-md-12 mb-4">
+      <div class="frosted-glass p-3" style="height: 400px;">
+        <h5 class="text-center">Monthly All Expenses</h5>
+        <canvas id="overallLine" style="width:100%; height:100%;"></canvas>
+      </div>
+    </div>
+    <!-- タグ別月別出費グラフ（ズーム・パン付き） -->
+    <div class="col-lg-6 col-md-12 mb-4">
+      <div class="frosted-glass p-3" style="height: 400px;">
+        <h5 class="text-center">Tagged Monthly Expenditures</h5>
+        <canvas id="combinedLineChart" style="width:100%; height:100%;"></canvas>
+      </div>
+    </div>
+    <!-- スタックチャート（ズーム・パン付き） -->
+    <div class="col-lg-6 col-md-12 mb-4">
+      <div class="frosted-glass p-3" style="height: 400px;">
+        <h5 class="text-center">Stacked Tag Chart</h5>
+        <canvas id="stackedChart" style="width:100%; height:100%;"></canvas>
+      </div>
+    </div>
+    <!-- カテゴリー内訳ドーナツチャート -->
+    <div class="col-lg-6 col-md-12 mb-4">
+      <div class="frosted-glass p-3" style="height: 400px;">
+        <h5 class="text-center">Category Breakdown</h5>
+        <canvas id="categoryDonutChart" style="width:100%; height:100%;"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <!-- 月ごとの支出比較グラフ（チェックボックスは廃止） -->
+  <div class="row my-4">
+    <div class="col-12">
+      <div class="frosted-glass p-3">
+        <h5 class="text-center">Monthly Expense Comparison</h5>
+        <canvas id="monthlyComparisonChart" style="width:100%; height:400px;"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <!-- フィルターフォーム -->
+  <div class="frosted-glass p-3 mb-4">
+    <h4>フィルター</h4>
+    <form method="get" class="row g-3 align-items-center filter-form">
+      <div class="col-auto">
+        <label for="start_date" class="col-form-label">開始日:</label>
+      </div>
+      <div class="col-auto">
+        <input type="date" name="start_date" id="start_date" class="form-control" value="{{ request.args.get('start_date', '') }}">
+      </div>
+      <div class="col-auto">
+        <label for="end_date" class="col-form-label">終了日:</label>
+      </div>
+      <div class="col-auto">
+        <input type="date" name="end_date" id="end_date" class="form-control" value="{{ request.args.get('end_date', '') }}">
+      </div>
+      <div class="col-auto">
+        <label for="year_month" class="col-form-label">年月:</label>
+      </div>
+      <div class="col-auto">
+        <select name="year_month" id="year_month" class="form-select">
+          <option value="">すべて</option>
+          {% for ym, label in year_month_choices %}
+          <option value="{{ ym }}" {% if request.args.get('year_month') == ym %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-auto">
+        <label for="filter_tag" class="col-form-label">タグ:</label>
+      </div>
+      <div class="col-auto">
+        <select name="filter_tag" id="filter_tag" class="form-select">
+          <option value="">すべて</option>
+          {% for t in unique_tags %}
+          <option value="{{ t }}" {% if request.args.get('filter_tag') == t %}selected{% endif %}>{{ t }}</option>
+          {% endfor %}
+          <option value="その他" {% if request.args.get('filter_tag') == "その他" %}selected{% endif %}>その他</option>
+        </select>
+      </div>
+      <div class="col-auto">
+        <label for="sort_order" class="col-form-label">日付のソート順:</label>
+      </div>
+      <div class="col-auto">
+        <select name="sort_order" id="sort_order" class="form-select">
+          <option value="asc" {% if current_sort_order == 'asc' %}selected{% endif %}>昇順</option>
+          <option value="desc" {% if current_sort_order == 'desc' %}selected{% endif %}>降順</option>
+        </select>
+      </div>
+      <div class="col-auto">
+        <button type="submit" class="btn btn-custom btn-secondary">フィルタ適用</button>
+      </div>
+      <div class="col-auto">
+        <a href="{{ url_for('index') }}" class="btn btn-custom btn-outline-light">リセット</a>
+      </div>
+    </form>
+  </div>
+
+  <!-- 登録データ一覧（アコーディオン） -->
+  <div class="accordion mb-4" id="dataAccordion">
+    <div class="accordion-item" style="background-color: rgba(0,0,0,0.3); border: none;">
+      <h2 class="accordion-header" id="headingOne">
+        <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapseOne" aria-expanded="false" aria-controls="collapseOne">
+          登録データ一覧の表示/非表示
+        </button>
+      </h2>
+      <div id="collapseOne" class="accordion-collapse collapse" aria-labelledby="headingOne" data-bs-parent="#dataAccordion">
+        <div class="accordion-body" style="background-color: rgba(0,0,0,0.2);">
+          <form method="post" action="{{ url_for('index') }}">
+            <input type="hidden" name="submit_type" value="delete_selected">
+            <table class="table table-dark table-hover">
+              <thead>
+                <tr>
+                  <th><input type="checkbox" id="selectAll"></th>
+                  <th>日付</th>
+                  <th>購入店舗</th>
+                  <th>金額</th>
+                  <th>タグ</th>
+                  <th>詳細</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody>
+              {% for item in data %}
+                <tr>
+                  <td><input type="checkbox" name="selected_ids" value="{{ item.id }}"></td>
+                  <td>{{ item.date }}</td>
+                  <td>{{ item.store }}</td>
+                  <td>{{ item.amount }}円</td>
+                  <td>{{ item.tag if item.tag else "その他" }}</td>
+                  <td>{{ item.details if item.details else "-" }}</td>
+                  <td>
+                    <a href="{{ url_for('edit', record_id=item.id, start_date=request.args.get('start_date', ''), end_date=request.args.get('end_date', ''), year_month=request.args.get('year_month', ''), filter_tag=request.args.get('filter_tag', ''), sort_order=request.args.get('sort_order', 'asc')) }}" class="btn btn-custom btn-warning btn-sm">編集</a>
+                  </td>
+                </tr>
+              {% endfor %}
+              </tbody>
+            </table>
+            <button type="submit" class="btn btn-custom btn-danger mt-2">選択した項目を削除</button>
+          </form>
+          <form method="post" action="{{ url_for('index') }}">
+            <input type="hidden" name="submit_type" value="delete_all">
+            <button type="submit" class="btn btn-custom btn-danger mt-2" onclick="return confirm('本当に全て削除しますか？');">全て削除</button>
+          </form>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 円グラフ詳細表示用モーダル -->
+  <div class="modal fade" id="detailModal" tabindex="-1" aria-labelledby="detailModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+      <div class="modal-content frosted-glass">
+        <div class="modal-header">
+          <h5 class="modal-title" id="detailModalLabel">内訳詳細</h5>
+          <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="閉じる"></button>
+        </div>
+        <div class="modal-body" id="detailModalBody">
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- モーダル: 新規入力（手動） -->
+<div class="modal fade" id="newEntryModal" tabindex="-1" aria-labelledby="newEntryModalLabel" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content frosted-glass" style="color: inherit;">
+      <div class="modal-header">
+        <h5 class="modal-title" id="newEntryModalLabel">新規入力(手動)</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="閉じる"></button>
+      </div>
+      <div class="modal-body">
+        <form method="post" action="{{ url_for('index') }}">
+          <input type="hidden" name="submit_type" value="add_manual">
+          <div class="mb-3">
+            <label class="form-label">日付(YYYY-MM-DD)</label>
+            <input type="date" name="date" class="form-control" required>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">購入店舗</label>
+            <input type="text" name="store" class="form-control" required>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">金額</label>
+            <div class="input-group">
+              <input type="text" name="amount" class="form-control" required>
+              <span class="input-group-text">円</span>
+            </div>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">タグ</label>
+            <input type="text" name="tag" class="form-control" list="tag-list">
+            <datalist id="tag-list">
+              {% for t in unique_tags %}
+              <option value="{{ t }}">
+              {% endfor %}
+              <option value="その他">
+            </datalist>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">詳細</label>
+            <input type="text" name="details" class="form-control">
+          </div>
+          <button type="submit" class="btn btn-custom btn-success w-100">追加</button>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- モーダル: 新規入力（ペースト） -->
+<div class="modal fade" id="pasteEntryModal" tabindex="-1" aria-labelledby="pasteEntryModalLabel" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content frosted-glass" style="color: inherit;">
+      <div class="modal-header">
+        <h5 class="modal-title" id="pasteEntryModalLabel">新規入力(ペースト)</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="閉じる"></button>
+      </div>
+      <div class="modal-body">
+        <form method="post" action="{{ url_for('index') }}">
+          <input type="hidden" name="submit_type" value="add_paste">
+          <div class="mb-3">
+            <label class="form-label">ペーストデータ</label>
+            <textarea name="paste_data" class="form-control" rows="6" placeholder="例:
+2023/
+12/25
+マクドナルド
+
+1,000円
+..."></textarea>
+          </div>
+          <button type="submit" class="btn btn-custom btn-primary w-100">追加</button>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock content %}
+
+{% block body_scripts %}
+<script>
+// --- グローバル変数（バックエンドから渡されたデータ） ---
+const allMonths = {{ all_months | tojson }};
+const overallDataset = {{ overall_dataset | tojson }};
+const catCharts = {{ cat_charts | tojson }};
+const tags = {{ tags | tojson }};
+const latestMonth = "{{ latest_month }}";
+const stackedDatasets = {{ stacked_datasets | tojson }};
+const monthlyData = {{ monthly_data | tojson }};
+const categoryTotalsLabels = {{ category_totals_labels | tojson }};
+const categoryTotalsData = {{ category_totals_data | tojson }};
+
+// --- 全体の出費グラフ (overallLine) ---
+const overallCtx = document.getElementById('overallLine').getContext('2d');
+const overallChart = new Chart(overallCtx, {
+  type: 'line',
+  data: {
+    labels: allMonths,
+    datasets: [{
+      label: 'All Expenses',
+      data: overallDataset,
+      borderColor: '#fff',
+      backgroundColor: 'rgba(255,255,255,0.2)',
+      fill: true,
+      tension: 0.4,
+      pointBackgroundColor: '#fff',
+      pointBorderColor: '#fff',
+      pointRadius: 5,
+      pointHoverRadius: 7
+    }]
+  },
+  options: {
+    responsive: true,
+    maintainAspectRatio: false,
+    animation: { duration: 1500, easing: 'easeInOutQuart' },
+    scales: {
+      y: {
+        beginAtZero: true,
+        grid: { color: 'rgba(255,255,255,0.1)' },
+        ticks: { color: '#fff' }
+      },
+      x: {
+        grid: { color: 'rgba(255,255,255,0.1)' },
+        ticks: { color: '#fff' }
+      }
+    },
+    plugins: {
+      legend: {
+        labels: { color: '#fff', font: { size:14, weight:'bold' } }
+      },
+      tooltip: {
+        backgroundColor: '#333',
+        titleColor: '#fff',
+        bodyColor: '#fff',
+        cornerRadius: 8,
+        padding: 10,
+        callbacks: {
+          label: function(context) {
+            return context.parsed.y + '円';
+          }
+        }
+      }
+    }
+  }
+});
+
+// --- タグ別月別出費グラフ (combinedLineChart) with Zoom ---
+const colorPalette = [
+  'rgba(54,162,235,1)', 'rgba(255,206,86,1)', 'rgba(75,192,192,1)',
+  'rgba(153,102,255,1)', 'rgba(255,159,64,1)', 'rgba(255,99,132,1)',
+  'rgba(201,203,207,1)', 'rgba(0,255,0,1)', 'rgba(0,0,255,1)', 'rgba(255,255,0,1)'
+];
+const combinedDatasets = tags.map((tag, i) => ({
+  label: tag,
+  data: catCharts[tag] || [],
+  borderColor: colorPalette[i % colorPalette.length],
+  backgroundColor: colorPalette[i % colorPalette.length].replace('1)', '0.2)'),
+  fill: true,
+  tension: 0.4,
+  pointBackgroundColor: colorPalette[i % colorPalette.length],
+  pointBorderColor: '#fff',
+  pointRadius: 3,
+  pointHoverRadius: 5
+}));
+const combinedCtx = document.getElementById('combinedLineChart').getContext('2d');
+const combinedChart = new Chart(combinedCtx, {
+  type: 'line',
+  data: {
+    labels: allMonths,
+    datasets: combinedDatasets
+  },
+  options: {
+    responsive: true,
+    maintainAspectRatio: false,
+    animation: { duration: 1500, easing:'easeInOutQuart' },
+    scales: {
+      y: {
+        beginAtZero: true,
+        grid: { color: 'rgba(255,255,255,0.1)' },
+        ticks: { color: '#fff' }
+      },
+      x: {
+        grid: { color: 'rgba(255,255,255,0.1)' },
+        ticks: { color: '#fff' }
+      }
+    },
+    plugins: {
+      legend: {
+        labels: { color: '#fff', font: { size:14, weight:'bold' } },
+        position: 'top'
+      },
+      tooltip: {
+        backgroundColor: '#333',
+        titleColor: '#fff',
+        bodyColor: '#fff',
+        cornerRadius: 8,
+        padding: 10,
+        callbacks: { label: function(context){ return context.parsed.y + '円'; } }
+      },
+      zoom: {
+        pan: { enabled: true, mode: 'x' },
+        zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: 'x' }
+      }
+    },
+    onClick: (evt, elements) => {
+      if(elements.length > 0){
+        const el = elements[0];
+        const tag = combinedChart.data.datasets[el.datasetIndex].label;
+        handleChartClick(evt, combinedChart, tag);
+      }
+    }
+  }
+});
+
+// --- スタックチャート (stackedChart) with Zoom ---
+const stackedCtx = document.getElementById('stackedChart').getContext('2d');
+const stackedChart = new Chart(stackedCtx, {
+  type: 'line',
+  data: {
+    labels: allMonths,
+    datasets: stackedDatasets
+  },
+  options: {
+    responsive: true,
+    maintainAspectRatio: false,
+    animation: { duration: 1500, easing:'easeInOutQuart' },
+    scales: {
+      y: {
+        stacked: true,
+        beginAtZero: true,
+        grid: { color: 'rgba(255,255,255,0.1)' },
+        ticks: { color: '#fff' }
+      },
+      x: {
+        grid: { color: 'rgba(255,255,255,0.1)' },
+        ticks: { color: '#fff' }
+      }
+    },
+    plugins: {
+      legend: {
+        labels: { color: '#fff', font: { size:14, weight:'bold' } },
+        position: 'top'
+      },
+      tooltip: {
+        backgroundColor: '#333',
+        titleColor: '#fff',
+        bodyColor: '#fff',
+        cornerRadius: 8,
+        padding: 10,
+        callbacks: { label: function(context){ return context.parsed.y + '円'; } }
+      },
+      zoom: {
+        pan: { enabled: true, mode: 'x' },
+        zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: 'x' }
+      }
+    },
+    onClick: (evt, elements) => {
+      if(elements.length > 0){
+        const el = elements[0];
+        const tag = stackedChart.data.datasets[el.datasetIndex].label;
+        handleChartClick(evt, stackedChart, tag);
+      }
+    }
+  }
+});
+
+// --- 月ごとの支出比較グラフ (monthlyComparisonChart) with Gradient ---
+// ※ チェックボックスは廃止
+const monthlyComparisonCtx = document.getElementById('monthlyComparisonChart').getContext('2d');
+const gradient = monthlyComparisonCtx.createLinearGradient(0, 0, 0, monthlyComparisonCtx.canvas.height);
+gradient.addColorStop(0, 'rgba(54, 162, 235, 0.8)');
+gradient.addColorStop(1, 'rgba(54, 162, 235, 0.2)');
+let monthlyComparisonChart = new Chart(monthlyComparisonCtx, {
+  type: 'bar',
+  data: {
+    labels: allMonths,
+    datasets: [{
+      label: '支出金額',
+      data: allMonths.map(m => monthlyData[m] || 0),
+      backgroundColor: gradient,
+      borderColor: '#fff',
+      borderWidth: 1,
+      borderRadius: 10
+    }]
+  },
+  options: {
+    responsive: true,
+    plugins: { 
+      legend: { display: false },
+      tooltip: { callbacks: { label: function(context){ return context.parsed.y + '円'; } } }
+    },
+    scales: {
+      y: { beginAtZero: true, ticks: { color: '#fff' }, grid: { color: 'rgba(255,255,255,0.1)' } },
+      x: { ticks: { color: '#fff' }, grid: { color: 'rgba(255,255,255,0.1)' } }
+    }
+  }
+});
+
+// --- カテゴリー内訳ドーナツチャート ---
+const categoryDonutCtx = document.getElementById('categoryDonutChart').getContext('2d');
+const categoryDonutChart = new Chart(categoryDonutCtx, {
+  type: 'doughnut',
+  data: {
+    labels: categoryTotalsLabels,
+    datasets: [{
+      data: categoryTotalsData,
+      backgroundColor: [
+        'rgba(255,99,132,0.7)', 'rgba(54,162,235,0.7)', 'rgba(255,206,86,0.7)',
+        'rgba(75,192,192,0.7)', 'rgba(153,102,255,0.7)', 'rgba(255,159,64,0.7)',
+        'rgba(201,203,207,0.7)', 'rgba(0,255,0,0.7)', 'rgba(0,0,255,0.7)', 'rgba(255,255,0,0.7)'
+      ]
+    }]
+  },
+  options: {
+    responsive: true,
+    maintainAspectRatio: false,
+    layout: { padding: { top: 20, right: 20, bottom: 20, left: 20 } },
+    plugins: {
+      legend: { position: 'top', labels: { color: '#fff' } },
+      tooltip: { callbacks: { label: function(context){ return context.label + ': ' + context.parsed + '円'; } } }
+    }
+  }
+});
+
+// --- 円グラフクリック時詳細表示（モーダル） ---
+async function handleChartClick(evt, chartObj, categoryLabel) {
+  const points = chartObj.getElementsAtEventForMode(evt, 'nearest', { intersect: true }, false);
+  if (!points.length) return;
+  const pointIdx = points[0].index;
+  const monthKey = chartObj.data.labels[pointIdx];
+  const tag = (categoryLabel === "Overall") ? "Overall" : categoryLabel;
+  const res = await fetch("/api/plot_detail", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({ month: monthKey, tag: tag })
+  });
+  if(!res.ok){
+    alert("エラーが発生しました。");
+    return;
+  }
+  const jsn = await res.json();
+  let detailHtml = "";
+  if(jsn.detail && jsn.detail.length > 0){
+    jsn.detail.forEach(d => {
+      if(d.tag){
+        detailHtml += `<p>${d.tag} : ${d.amount}円</p>`;
+      } else if(d.store){
+        detailHtml += `<p>${d.store} : ${d.amount}円</p>`;
+      } else {
+        detailHtml += `<p>不明 : ${d.amount}円</p>`;
+      }
+    });
+  } else {
+    detailHtml = "<p>データなし</p>";
+  }
+  document.getElementById('detailModalBody').innerHTML = detailHtml;
+  const detailModal = new bootstrap.Modal(document.getElementById('detailModal'));
+  detailModal.show();
+}
+
+// --- Select All チェックボックス ---
+const selectAllChk = document.getElementById("selectAll");
+if(selectAllChk){
+  selectAllChk.addEventListener("change", () => {
+    let boxes = document.querySelectorAll('input[name="selected_ids"]');
+    boxes.forEach(cb => { cb.checked = selectAllChk.checked; });
+  });
+}
+</script>
+{% endblock body_scripts %}

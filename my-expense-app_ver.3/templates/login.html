@@ -1,0 +1,139 @@
+{% extends "base.html" %}
+{% block title %}ログイン - Modern Expense Tracker{% endblock title %}
+
+{% block content %}
+<div class="d-flex justify-content-center align-items-center" style="min-height: 80vh;">
+  <div class="col-lg-4 col-md-6 col-sm-8">
+    <div class="frosted-glass p-5 text-center fade-in-up">
+      <div class="mb-4">
+        <div class="login-icon mb-4">
+          <i class="fas fa-shield-alt fa-4x text-primary"></i>
+        </div>
+        <h2 class="display-6 fw-bold mb-2">ようこそ</h2>
+        <p class="text-secondary mb-0">アカウントにログインしてください</p>
+      </div>
+      
+      <form method="post">
+        <div class="mb-4">
+          <div class="input-group input-group-lg">
+            <span class="input-group-text">
+              <i class="fas fa-key"></i>
+            </span>
+            <input type="password" name="password" id="password" 
+                   class="form-control" required placeholder="パスワードを入力">
+          </div>
+        </div>
+        
+        <button type="submit" class="btn btn-custom btn-primary btn-lg w-100 mb-3">
+          <i class="fas fa-sign-in-alt me-2"></i>ログイン
+        </button>
+      </form>
+      
+      <div class="login-footer">
+        <small class="text-muted">
+          <i class="fas fa-lock me-1"></i>
+          セキュアな接続で保護されています
+        </small>
+      </div>
+    </div>
+  </div>
+</div>
+
+<style>
+.fade-in-up {
+  animation: fadeInUp 1s ease-out;
+}
+
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(50px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.login-icon {
+  background: linear-gradient(135deg, rgba(78, 205, 196, 0.2), rgba(69, 183, 209, 0.2));
+  width: 100px;
+  height: 100px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto;
+  border: 2px solid rgba(255, 255, 255, 0.1);
+}
+
+.input-group-text {
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: #ffffff;
+  border-radius: 12px 0 0 12px;
+}
+
+.form-control {
+  border-radius: 0 12px 12px 0;
+  border-left: none;
+}
+
+.form-control:focus {
+  box-shadow: 0 0 0 0.2rem rgba(78, 205, 196, 0.25);
+  border-color: #4ECDC4;
+}
+
+.btn-lg {
+  padding: 15px 30px;
+  font-size: 1.1rem;
+  font-weight: 600;
+  border-radius: 15px;
+}
+
+.login-footer {
+  padding-top: 20px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+/* Pulse animation for icon */
+.login-icon i {
+  animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+  0% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.05);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+/* Hover effects */
+.frosted-glass:hover {
+  transform: translateY(-5px);
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
+}
+
+/* Mobile responsiveness */
+@media (max-width: 576px) {
+  .frosted-glass {
+    margin: 1rem;
+    padding: 2rem !important;
+  }
+  
+  .login-icon {
+    width: 80px;
+    height: 80px;
+  }
+  
+  .login-icon i {
+    font-size: 3rem !important;
+  }
+}
+</style>
+{% endblock content %}

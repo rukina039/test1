@@ -1,0 +1,10 @@
+runtime: custom
+env: flex
+
+env_variables:
+  SECRET_KEY: "YOUR_SECURE_SECRET_KEY"
+  APP_PASSWORD: "your_secure_password"
+
+resources:
+  cpu: 1
+  memory_gb: 1

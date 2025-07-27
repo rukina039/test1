@@ -1,0 +1,129 @@
+{% extends "base.html" %}
+{% block title %}編集 - Modern Expense Tracker{% endblock title %}
+
+{% block content %}
+<div class="container">
+  <div class="row justify-content-center">
+    <div class="col-lg-8 col-md-10">
+      <div class="frosted-glass p-5 fade-in-up">
+        <div class="text-center mb-4">
+          <h2 class="display-6 fw-bold">
+            <i class="fas fa-edit me-3"></i>出費編集
+          </h2>
+          <p class="text-secondary mb-0">支出データを編集・更新します</p>
+        </div>
+        
+        <form method="post" action="{{ url_for('edit', record_id=record.id) }}">
+          <!-- Hidden fields to maintain filters -->
+          <input type="hidden" name="start_date_hidden" value="{{ start_date }}">
+          <input type="hidden" name="end_date_hidden" value="{{ end_date }}">
+          <input type="hidden" name="year_month_hidden" value="{{ year_month }}">
+          <input type="hidden" name="filter_tag_hidden" value="{{ filter_tag }}">
+          <input type="hidden" name="sort_order_hidden" value="{{ current_sort_order }}">
+          
+          <div class="row">
+            <div class="col-md-6 mb-4">
+              <label for="date" class="form-label">
+                <i class="fas fa-calendar me-2"></i>日付
+              </label>
+              <input type="date" class="form-control" name="date" id="date" 
+                     value="{{ record.date }}" required>
+            </div>
+            
+            <div class="col-md-6 mb-4">
+              <label for="store" class="form-label">
+                <i class="fas fa-store me-2"></i>購入店舗
+              </label>
+              <input type="text" class="form-control" name="store" id="store" 
+                     value="{{ record.store }}" required placeholder="店舗名を入力">
+            </div>
+          </div>
+          
+          <div class="row">
+            <div class="col-md-6 mb-4">
+              <label for="amount" class="form-label">
+                <i class="fas fa-yen-sign me-2"></i>金額
+              </label>
+              <div class="input-group">
+                <input type="text" class="form-control" name="amount" id="amount" 
+                       value="{{ record.amount }}" required>
+                <span class="input-group-text">円</span>
+              </div>
+            </div>
+            
+            <div class="col-md-6 mb-4">
+              <label for="tag" class="form-label">
+                <i class="fas fa-tag me-2"></i>カテゴリ
+              </label>
+              <input type="text" class="form-control" name="tag" id="tag" 
+                     list="tag-list" value="{{ record.tag }}" placeholder="カテゴリを選択">
+              <datalist id="tag-list">
+                {% for t in unique_tags %}
+                <option value="{{ t }}">
+                {% endfor %}
+              </datalist>
+            </div>
+          </div>
+          
+          <div class="mb-4">
+            <label for="details" class="form-label">
+              <i class="fas fa-sticky-note me-2"></i>詳細・メモ
+            </label>
+            <textarea class="form-control" name="details" id="details" rows="3" 
+                     placeholder="詳細情報があれば入力してください">{{ record.details }}</textarea>
+          </div>
+          
+          <div class="d-grid gap-3">
+            <button type="submit" class="btn btn-custom btn-success btn-lg">
+              <i class="fas fa-save me-2"></i>更新する
+            </button>
+            <a href="{{ url_for('index', 
+                       start_date=start_date, 
+                       end_date=end_date, 
+                       year_month=year_month, 
+                       filter_tag=filter_tag, 
+                       sort_order=current_sort_order) }}" 
+               class="btn btn-custom btn-outline-light btn-lg">
+              <i class="fas fa-arrow-left me-2"></i>戻る
+            </a>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+
+<style>
+.fade-in-up {
+  animation: fadeInUp 0.8s ease-out;
+}
+
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(30px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.form-control:focus {
+  box-shadow: 0 0 0 0.2rem rgba(76, 175, 80, 0.25);
+  border-color: #4CAF50;
+}
+
+.input-group-text {
+  background: rgba(76, 175, 80, 0.2);
+  border-color: rgba(255, 255, 255, 0.2);
+  color: #ffffff;
+}
+
+.btn-lg {
+  padding: 15px 30px;
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+</style>
+{% endblock content %}
